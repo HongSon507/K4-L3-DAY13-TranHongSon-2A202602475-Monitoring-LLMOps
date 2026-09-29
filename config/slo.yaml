@@ -3,11 +3,28 @@ primary_slo:
   name: fast_successful_requests
   window: 28d
   sli:
+    # Mẫu số là request_received (không phải response_sent + request_failed): request bị
+    # worker crash/timeout không kịp ghi request_failed vẫn bị tính là "bad".
     good_event: 'event == "response_sent" and latency_ms <= 3000'
     total_event: 'event == "request_received"'
   target_percent: 99.5
   error_budget_percent: 0.5
-  note: Học viên phải giải thích hoặc điều chỉnh ngưỡng bằng baseline của mình.
+  rationale: >-
+    Baseline warm của fake LLM: P50 ~150 ms, P95 ~450 ms, TTFT P95 50 ms; request đầu tiên sau
+    khi khởi động phải fetch prompt từ Langfuse (fetch_timeout 2 s) nên có thể lên ~1.6 s.
+    Ngưỡng 3000 ms giữ khoảng dư ~2x cho cold start nhưng vẫn bắt được incident rag_slow
+    (retrieval +2.5 s đẩy latency lên ~2.7-3.2 s). Chọn 99.5% thay vì 99.9% vì phụ thuộc hai
+    dịch vụ ngoài (Langfuse prompt API, vector store) không có SLA; 99.5% cho phép khoảng
+    3.4 giờ xấu hoàn toàn trong 28 ngày, đủ để xử lý incident mà không đóng băng release.
+  error_budget:
+    formula: 'allowed_bad = total_requests * (1 - target_percent / 100)'
+    example_28d: 'giả định 10 req/phút -> 403,200 req/28 ngày -> được phép 2,016 bad requests'
+    example_1h_lab: '600 req/giờ -> 3 bad requests; 1 giờ = 1/672 cửa sổ nên budget theo giờ ~0.15% tổng budget'
+    burn_rate: 'burn_rate = (bad / total trong cửa sổ đo) / 0.005'
+    policy:
+      - 'burn_rate >= 14.4 trong 1h (tiêu 2% budget/giờ): page on-call, xem alert high_latency_p95_breach'
+      - 'burn_rate >= 6 trong 6h (tiêu 5% budget): ticket, ưu tiên fix trong ngày'
+      - 'còn < 25% budget: dừng thay đổi prompt/model không khẩn cấp cho tới cuối cửa sổ'
 guardrails:
   error_rate_pct_max: 2
   daily_cost_usd_max: 2.5
